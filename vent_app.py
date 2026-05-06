@@ -15,23 +15,20 @@ bg_vent_table = {
 whole_dwelling_flow_table = {1: 13, 2: 17, 3: 21, 4: 25, 5: 29}
 
 # --- URL PERSISTENCE LOGIC ---
-# This part reads the data from the website link if the page refreshes
 params = st.query_params
 
 if 'floor_area' not in st.session_state:
-    st.session_state.floor_area = float(params.get("area", 72.0))
+    st.session_state.floor_area = int(params.get("area", 72))
 if 'bedrooms' not in st.session_state:
     st.session_state.bedrooms = int(params.get("beds", 2))
 if 'vents' not in st.session_state:
-    # Try to load vents from URL, otherwise start with one empty vent
     url_vents = params.get("vdata", None)
     if url_vents:
         st.session_state.vents = json.loads(url_vents)
     else:
-        st.session_state.vents = [{'size': 0.0, 'is_open': True}]
+        st.session_state.vents = [{'size': 0, 'is_open': True}]
 
 def update_url():
-    # This packs your data into the website link automatically
     v_json = json.dumps(st.session_state.vents)
     st.query_params.update(
         area=st.session_state.floor_area,
@@ -39,9 +36,8 @@ def update_url():
         vdata=v_json
     )
 
-# --- STATE ACTIONS ---
 def add_vent():
-    st.session_state.vents.append({'size': 0.0, 'is_open': True})
+    st.session_state.vents.append({'size': 0, 'is_open': True})
     update_url()
 
 def remove_vent(i):
@@ -52,12 +48,13 @@ def remove_vent(i):
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("Property Details")
-    st.number_input("Total Floor Area (m²)", min_value=1.0, step=0.1, key="floor_area", on_change=update_url)
+    # Step=1 and value as int removes the decimal points
+    st.number_input("Total Floor Area (m²)", min_value=1, step=1, key="floor_area", on_change=update_url)
     st.selectbox("Number of Bedrooms", options=[1, 2, 3, 4, 5], key="bedrooms", on_change=update_url)
     st.divider()
     if st.button("Reset Survey"):
-        st.session_state.vents = [{'size': 0.0, 'is_open': True}]
-        st.session_state.floor_area = 72.0
+        st.session_state.vents = [{'size': 0, 'is_open': True}]
+        st.session_state.floor_area = 72
         st.session_state.bedrooms = 2
         st.query_params.clear()
         st.rerun()
@@ -72,14 +69,14 @@ total_actual_area = 0.0
 for i, vent in enumerate(st.session_state.vents):
     c1, c2, c3, c4 = st.columns([3, 2, 3, 1])
     
-    # Size Input
-    size = c1.number_input(f"Vent {i+1} Size", value=vent['size'], key=f"s_{i}", on_change=update_url)
+    # size is now an integer (no decimals)
+    size = c1.number_input(f"Vent {i+1} Size", value=int(vent['size']), step=1, key=f"s_{i}", on_change=update_url)
     st.session_state.vents[i]['size'] = size
     
-    # Checkbox
     is_open = c2.checkbox("Open?", value=vent['is_open'], key=f"o_{i}", on_change=update_url)
     st.session_state.vents[i]['is_open'] = is_open
     
+    # Calculation remains: (Size * 10) * 0.8
     equiv = (size * 10) * 0.8
     total_available_area += equiv
     if is_open: total_actual_area += equiv
