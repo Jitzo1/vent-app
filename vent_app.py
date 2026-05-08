@@ -14,9 +14,18 @@ bg_vent_table = {
 }
 whole_dwelling_flow_table = {1: 13, 2: 17, 3: 21, 4: 25, 5: 29}
 
+# UPDATED ROOM LIST
+ROOM_OPTIONS = [
+    "Lounge", "Living Room", "Dining Room", "Kitchen", "Utility room", 
+    "Hallway", "Bathroom", "Bathroom 2", "Bathroom 3", "Ensuite", 
+    "Bed 1", "Bed 2", "Bed 3", "Bed 4", "Bedroom 5"
+]
+
 # --- URL PERSISTENCE LOGIC ---
 params = st.query_params
 
+if 'address' not in st.session_state:
+    st.session_state.address = params.get("addr", "")
 if 'floor_area' not in st.session_state:
     st.session_state.floor_area = int(params.get("area", 72))
 if 'bedrooms' not in st.session_state:
@@ -26,18 +35,19 @@ if 'vents' not in st.session_state:
     if url_vents:
         st.session_state.vents = json.loads(url_vents)
     else:
-        st.session_state.vents = [{'size': 0, 'is_open': True}]
+        st.session_state.vents = [{'size': 0, 'is_open': True, 'room': 'Lounge'}]
 
 def update_url():
     v_json = json.dumps(st.session_state.vents)
     st.query_params.update(
+        addr=st.session_state.address,
         area=st.session_state.floor_area,
         beds=st.session_state.bedrooms,
         vdata=v_json
     )
 
 def add_vent():
-    st.session_state.vents.append({'size': 0, 'is_open': True})
+    st.session_state.vents.append({'size': 0, 'is_open': True, 'room': 'Lounge'})
     update_url()
 
 def remove_vent(i):
@@ -48,14 +58,15 @@ def remove_vent(i):
 # --- SIDEBAR ---
 with st.sidebar:
     st.header("Property Details")
-    # Step=1 and value as int removes the decimal points
+    st.text_input("Property Address", key="address", on_change=update_url)
     st.number_input("Total Floor Area (m²)", min_value=1, step=1, key="floor_area", on_change=update_url)
     st.selectbox("Number of Bedrooms", options=[1, 2, 3, 4, 5], key="bedrooms", on_change=update_url)
     st.divider()
     if st.button("Reset Survey"):
-        st.session_state.vents = [{'size': 0, 'is_open': True}]
+        st.session_state.vents = [{'size': 0, 'is_open': True, 'room': 'Lounge'}]
         st.session_state.floor_area = 72
         st.session_state.bedrooms = 2
+        st.session_state.address = ""
         st.query_params.clear()
         st.rerun()
 
@@ -67,22 +78,28 @@ total_available_area = 0.0
 total_actual_area = 0.0
 
 for i, vent in enumerate(st.session_state.vents):
-    c1, c2, c3, c4 = st.columns([3, 2, 3, 1])
+    col_room, col_size, col_open, col_del = st.columns([3, 2, 2, 1])
     
-    # size is now an integer (no decimals)
-    size = c1.number_input(f"Vent {i+1} Size", value=int(vent['size']), step=1, key=f"s_{i}", on_change=update_url)
+    # Room Dropdown (with safety check for old room names)
+    current_room = vent.get('room', 'Lounge')
+    if current_room not in ROOM_OPTIONS: current_room = 'Lounge'
+    
+    room = col_room.selectbox(f"Room {i+1}", options=ROOM_OPTIONS, index=ROOM_OPTIONS.index(current_room), key=f"r_{i}", on_change=update_url)
+    st.session_state.vents[i]['room'] = room
+
+    # Size Input
+    size = col_size.number_input(f"Size {i+1}", value=int(vent['size']), step=1, key=f"s_{i}", on_change=update_url)
     st.session_state.vents[i]['size'] = size
     
-    is_open = c2.checkbox("Open?", value=vent['is_open'], key=f"o_{i}", on_change=update_url)
+    # Checkbox
+    is_open = col_open.checkbox("Open?", value=vent['is_open'], key=f"o_{i}", on_change=update_url)
     st.session_state.vents[i]['is_open'] = is_open
     
-    # Calculation remains: (Size * 10) * 0.8
     equiv = (size * 10) * 0.8
     total_available_area += equiv
     if is_open: total_actual_area += equiv
     
-    c3.write(f"{equiv:,.0f} mm² ({'✅ Active' if is_open else '❌ Closed'})")
-    if c4.button("🗑️", key=f"d_{i}"):
+    if col_del.button("🗑️", key=f"d_{i}"):
         remove_vent(i)
         st.rerun()
 
@@ -91,7 +108,6 @@ st.button("➕ Add Another Vent", on_click=add_vent)
 # --- CALCULATIONS ---
 f_area = st.session_state.floor_area
 beds = st.session_state.bedrooms
-
 key = "Over" if f_area > 100 else str(int(math.ceil(f_area / 10.0) * 10))
 if f_area <= 50: key = "50"
 if key == "Over":
@@ -103,31 +119,29 @@ table_val = whole_dwelling_flow_table[beds]
 calc_val = round(f_area * 0.3, 1)
 final_val = math.ceil(max(table_val, calc_val))
 
-# --- SUMMARY GENERATION ---
-closed_count = sum(1 for v in st.session_state.vents if not v['is_open'])
-summary_line_1 = f"Total available passive ventilation via trickle vents = {total_available_area:,.0f} mm²."
-if closed_count > 0:
-    summary_line_2 = f"At the time of survey, due to trickle vents being closed, the total amount of passive ventilation was {total_actual_area:,.0f} mm²."
-else:
-    summary_line_2 = f"At the time of survey, all trickle vents were open, providing {total_actual_area:,.0f} mm²."
+# --- SUMMARY & BREAKDOWN GENERATION ---
+vent_list = []
+for v in st.session_state.vents:
+    v_status = "Open" if v['is_open'] else "Closed"
+    v_area_mm = (v['size'] * 10) * 0.8
+    vent_list.append(f"- {v['room']}: {v['size']}mm ({v_area_mm:,.0f} mm²) - Status: {v_status}")
+vent_breakdown_string = "\n".join(vent_list)
 
-status = "COMPLIANT" if total_actual_area >= required_mm2 else "NON-COMPLIANT"
+closed_count = sum(1 for v in st.session_state.vents if not v['is_open'])
 comparison_comment = f"The required amount of passive ventilation is {required_mm2:,.0f} mm² versus what was actually occurring at the time of survey ({total_actual_area:,.0f} mm²)."
 if total_actual_area < required_mm2 and closed_count > 0:
     comparison_comment += " Due to a number of Trickle vents being closed, which were therefore not allowing any passive ventilation into the property."
 
-full_compliance_block = f"{summary_line_1} {summary_line_2} Status: {status}. {comparison_comment}"
+full_compliance_block = f"Total available passive ventilation = {total_available_area:,.0f} mm². Status: {'COMPLIANT' if total_actual_area >= required_mm2 else 'NON-COMPLIANT'}. {comparison_comment}"
 
-# --- DISPLAY ASSESSMENT ---
+# --- DISPLAY RESULTS ---
 st.divider()
 st.header("Assessment Results")
-st.write(f"**{summary_line_1}**")
+st.write(f"**Address:** {st.session_state.address if st.session_state.address else 'Not Entered'}")
 if total_actual_area >= required_mm2:
-    st.success(f"{summary_line_2} {comparison_comment}")
+    st.success(full_compliance_block)
 else:
-    st.error(f"{summary_line_2} {comparison_comment}")
-
-st.write(f"**Final Extraction Requirement: {final_val} L/s**")
+    st.error(full_compliance_block)
 
 # --- WORD DOCUMENT GENERATOR ---
 st.header("📁 Generate Word Report")
@@ -143,17 +157,17 @@ if uploaded_file is not None:
     if st.button("Generate & Download Report"):
         doc = Document(uploaded_file)
         replacements = {
+            "{{ADDRESS}}": st.session_state.address,
             "{{AREA}}": str(f_area),
             "{{BEDROOMS}}": str(beds),
             "{{TABLE_VAL}}": str(table_val),
             "{{CALC_VAL}}": str(calc_val),
             "{{FINAL_VAL}}": str(final_val),
-            "{{TOTAL_AVAILABLE}}": f"{total_available_area:,.0f}",
-            "{{ACTUAL_VENT}}": f"{total_actual_area:,.0f}",
             "{{REQUIRED_MM2}}": f"{required_mm2:,.0f}",
-            "{{COMPLIANCE_TEXT}}": full_compliance_block
+            "{{COMPLIANCE_TEXT}}": full_compliance_block,
+            "{{VENT_BREAKDOWN}}": vent_breakdown_string
         }
         docx_replace(doc, replacements)
         buffer = io.BytesIO()
         doc.save(buffer)
-        st.download_button("💾 Download Word Report", data=buffer.getvalue(), file_name="Survey_Report.docx")
+        st.download_button("💾 Download Word Report", data=buffer.getvalue(), file_name=f"Survey_{st.session_state.address}.docx")
